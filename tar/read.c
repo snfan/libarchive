@@ -165,6 +165,8 @@ read_archive(struct bsdtar *bsdtar, char mode, struct archive *writer)
 	struct archive_entry	 *entry;
 	const char		 *reader_options;
 	int			  r;
+	int  iscount = 0;
+	long filecount = 0;
 
 	while (*bsdtar->argv) {
 		if (archive_match_include_pattern(bsdtar->matching,
@@ -180,7 +182,7 @@ read_archive(struct bsdtar *bsdtar, char mode, struct archive *writer)
 		    (bsdtar->flags & OPTFLAG_NULL)) != ARCHIVE_OK)
 			lafe_errc(1, 0, "Error inclusion pattern: %s",
 			    archive_error_string(bsdtar->matching));
-
+LOOP:
 	a = archive_read_new();
 	if (cset_read_support_filter_program(bsdtar->cset, a) == 0)
 		archive_read_support_filter_all(a);
@@ -303,89 +305,97 @@ read_archive(struct bsdtar *bsdtar, char mode, struct archive *writer)
 		 */
 		if (archive_match_excluded(bsdtar->matching, entry))
 			continue; /* Excluded by a pattern test. */
+		if(iscount)
+		{
+			if (mode == 't') {
+				/* Perversely, gtar uses -O to mean "send to stderr"
+				 * when used with -t. */
+				out = (bsdtar->flags & OPTFLAG_STDOUT) ?
+					stderr : stdout;
 
-		if (mode == 't') {
-			/* Perversely, gtar uses -O to mean "send to stderr"
-			 * when used with -t. */
-			out = (bsdtar->flags & OPTFLAG_STDOUT) ?
-			    stderr : stdout;
-
-			/*
-			 * TODO: Provide some reasonable way to
-			 * preview rewrites.  gtar always displays
-			 * the unedited path in -t output, which means
-			 * you cannot easily preview rewrites.
-			 */
-			if (bsdtar->verbose < 2)
-				safe_fprintf(out, "%s",
-				    archive_entry_pathname(entry));
-			else
-				list_item_verbose(bsdtar, out, entry);
-			fflush(out);
-			r = archive_read_data_skip(a);
-			if (r == ARCHIVE_WARN) {
+				/*
+				 * TODO: Provide some reasonable way to
+				 * preview rewrites.  gtar always displays
+				 * the unedited path in -t output, which means
+				 * you cannot easily preview rewrites.
+				 */
+				if (bsdtar->verbose < 2)
+					safe_fprintf(out, "%s",
+						archive_entry_pathname(entry));
+				else
+					list_item_verbose(bsdtar, out, entry);
+				fflush(out);
+				r = archive_read_data_skip(a);
+				if (r == ARCHIVE_WARN) {
+					fprintf(out, "\n");
+					lafe_warnc(0, "%s",
+						archive_error_string(a));
+				}
+				if (r == ARCHIVE_RETRY) {
+					fprintf(out, "\n");
+					lafe_warnc(0, "%s",
+						archive_error_string(a));
+				}
+				if (r == ARCHIVE_FATAL) {
+					fprintf(out, "\n");
+					lafe_warnc(0, "%s",
+						archive_error_string(a));
+					bsdtar->return_value = 1;
+					break;
+				}
 				fprintf(out, "\n");
-				lafe_warnc(0, "%s",
-				    archive_error_string(a));
-			}
-			if (r == ARCHIVE_RETRY) {
-				fprintf(out, "\n");
-				lafe_warnc(0, "%s",
-				    archive_error_string(a));
-			}
-			if (r == ARCHIVE_FATAL) {
-				fprintf(out, "\n");
-				lafe_warnc(0, "%s",
-				    archive_error_string(a));
-				bsdtar->return_value = 1;
-				break;
-			}
-			fprintf(out, "\n");
-		} else {
-			/* Note: some rewrite failures prevent extraction. */
-			if (edit_pathname(bsdtar, entry))
-				continue; /* Excluded by a rewrite failure. */
+			} else {
+				/* Note: some rewrite failures prevent extraction. */
+				if (edit_pathname(bsdtar, entry))
+					continue; /* Excluded by a rewrite failure. */
 
-			if ((bsdtar->flags & OPTFLAG_INTERACTIVE) &&
-			    !yes("extract '%s'", archive_entry_pathname(entry)))
-				continue;
+				if ((bsdtar->flags & OPTFLAG_INTERACTIVE) &&
+					!yes("extract '%s'", archive_entry_pathname(entry)))
+					continue;
 
-			if (bsdtar->verbose > 1) {
-				/* GNU tar uses -tv format with -xvv */
-				safe_fprintf(stderr, "x ");
-				list_item_verbose(bsdtar, stderr, entry);
-				fflush(stderr);
-			} else if (bsdtar->verbose > 0) {
-				/* Format follows SUSv2, including the
-				 * deferred '\n'. */
-				safe_fprintf(stderr, "x %s",
-				    archive_entry_pathname(entry));
-				fflush(stderr);
-			}
+				if (bsdtar->verbose > 1) {
+					/* GNU tar uses -tv format with -xvv */
+					safe_fprintf(stderr, "x ");
+					list_item_verbose(bsdtar, stderr, entry);
+					fflush(stderr);
+				} else if (bsdtar->verbose > 0) {
+					/* Format follows SUSv2, including the
+					 * deferred '\n'. */
+					//safe_fprintf(stderr, "[%ld] x %s",(filecount?((archive_file_count(a) * 100)/filecount):0),archive_entry_pathname(entry));
+					safe_fprintf(stderr, "%3d%%",(filecount?((archive_file_count(a) * 100)/filecount):0));
+					fflush(stderr);
+				}
 
-			/* TODO siginfo_printinfo(bsdtar, 0); */
+				/* TODO siginfo_printinfo(bsdtar, 0); */
 
-			if (bsdtar->flags & OPTFLAG_STDOUT)
-				r = archive_read_data_into_fd(a, 1);
-			else
-				r = archive_read_extract2(a, entry, writer);
-			if (r != ARCHIVE_OK) {
-				if (!bsdtar->verbose)
-					safe_fprintf(stderr, "%s", archive_entry_pathname(entry));
-				fprintf(stderr, ": %s: ", archive_error_string(a));
-				fprintf(stderr, "%s", strerror(errno));
-				if (!bsdtar->verbose)
+				if (bsdtar->flags & OPTFLAG_STDOUT)
+					r = archive_read_data_into_fd(a, 1);
+				else
+					r = archive_read_extract2(a, entry, writer);
+				if (r != ARCHIVE_OK) {
+					if (!bsdtar->verbose)
+						safe_fprintf(stderr, "%s", archive_entry_pathname(entry));
+					fprintf(stderr, ": %s: ", archive_error_string(a));
+					fprintf(stderr, "%s", strerror(errno));
+					if (!bsdtar->verbose)
+						fprintf(stderr, "\n");
+					bsdtar->return_value = 1;
+				}
+				if (bsdtar->verbose)
 					fprintf(stderr, "\n");
-				bsdtar->return_value = 1;
+				if (r == ARCHIVE_FATAL)
+					break;
 			}
-			if (bsdtar->verbose)
-				fprintf(stderr, "\n");
-			if (r == ARCHIVE_FATAL)
+		}else{
+			filecount = archive_file_count(a);
+			
+			if (archive_read_data_skip(a) == ARCHIVE_FATAL) {
+				bsdtar->return_value = 1;
 				break;
+			}
 		}
 	}
-
-
+	
 	r = archive_read_close(a);
 	if (r != ARCHIVE_OK)
 		lafe_warnc(0, "%s", archive_error_string(a));
@@ -395,10 +405,13 @@ read_archive(struct bsdtar *bsdtar, char mode, struct archive *writer)
 	if (bsdtar->verbose > 2)
 		fprintf(stdout, "Archive Format: %s,  Compression: %s\n",
 		    archive_format_name(a), archive_filter_name(a, 0));
-
 	archive_read_free(a);
+	if(!iscount)
+	{	
+		iscount++;
+		goto LOOP;
+	}	
 }
-
 
 static int
 unmatched_inclusions_warn(struct archive *matching, const char *msg)
