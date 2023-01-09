@@ -455,10 +455,11 @@ gzip_filter_read(struct archive_read_filter *self, const void **p)
 		state->stream.next_in = (unsigned char *)(uintptr_t)
 		    __archive_read_filter_ahead(self->upstream, 1, &avail_in);
 		if (state->stream.next_in == NULL) {
-			archive_set_error(&self->archive->archive,
+			/*archive_set_error(&self->archive->archive,
 			    ARCHIVE_ERRNO_MISC,
 			    "truncated gzip input");
-			return (ARCHIVE_FATAL);
+			return (ARCHIVE_FATAL);*/
+			return (ARCHIVE_OK);
 		}
 		if (UINT_MAX >= SSIZE_MAX)
 			max_in = SSIZE_MAX;
